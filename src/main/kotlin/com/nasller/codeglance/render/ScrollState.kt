@@ -74,8 +74,8 @@ class ScrollState : Cloneable{
         return true
     }
 
-    fun recomputeVisible(visibleArea: Rectangle, pixScale: Double = 1.0) {
-        visibleHeight = (visibleArea.height / pixScale).toInt().coerceAtLeast(0)
+    fun recomputeVisible(visibleArea: Rectangle) {
+        visibleHeight = visibleArea.height.coerceAtLeast(0)
         drawHeight = min(visibleHeight, documentHeight).coerceAtLeast(0)
 
         // 视口矩形必须能完整落在当前可绘制窗口内，否则 HiDPI 取整后会在底部出现裁切。

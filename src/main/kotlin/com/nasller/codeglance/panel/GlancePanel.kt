@@ -37,7 +37,6 @@ import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 class GlancePanel(info: EditorInfo) : JPanel(), Disposable {
 	val editor = info.editor
@@ -87,7 +86,7 @@ class GlancePanel(info: EditorInfo) : JPanel(), Disposable {
 	fun updateScrollState(visibleArea: Rectangle? = null, visibleChange: Boolean = true) = scrollState.run {
 		val visible = visibleArea ?: editor.scrollingModel.visibleArea
 		val repaint = computeDimensions(visible, visibleChange)
-		recomputeVisible(visible, scaleContext.getScale(DerivedScaleType.PIX_SCALE))
+		recomputeVisible(visible)
 		return@run repaint
 	}
 
@@ -298,10 +297,7 @@ class GlancePanel(info: EditorInfo) : JPanel(), Disposable {
 		} else curWidth
 	}
 
-	fun getConfigSize(): Dimension{
-		val pixScale = scaleContext.getScale(DerivedScaleType.PIX_SCALE)
-		return Dimension((getLogicalWidth() * pixScale).roundToInt(), 0)
-	}
+	fun getConfigSize(): Dimension = Dimension(getLogicalWidth(), 0)
 
 	override fun paintComponent(gfx: Graphics) {
 		super.paintComponent(gfx)
@@ -309,16 +305,16 @@ class GlancePanel(info: EditorInfo) : JPanel(), Disposable {
 		with(gfx as Graphics2D){
 			val pixScale = scaleContext.getScale(DerivedScaleType.PIX_SCALE)
 			val renderWidth = getLogicalWidth()
-			scale(pixScale, pixScale)
 			if(hideScrollBarListener.isNotRunning()) runReadActionBlocking { paintSomething() }
 			minimap.getImageOrUpdate()?.let {
 				composite = srcOver0_8
-				gfx.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR)
 				// 拖拽调整宽度时，缓存图像可能还是旧宽度，保持源图和目标宽度同步，避免横向拉伸。
 				val imagePaintWidth = min(renderWidth, fromRasterSize(it.width, pixScale))
 				val imagePaintRasterWidth = min(it.width, toRasterSize(imagePaintWidth, pixScale))
 				val sourceStartY = toRasterCoordinate(scrollState.visibleStart, pixScale)
 				val sourceEndY = min(it.height, toRasterCoordinate(scrollState.visibleEnd, pixScale))
+				// src rect is in raster pixels (buffer's native resolution); dst rect is in logical units
+				// (matching getConfigSize). Java2D resamples once from raster → device pixels.
 				drawImage(it, 0, 0, imagePaintWidth, scrollState.drawHeight,
 					0, sourceStartY, imagePaintRasterWidth, sourceEndY, null)
 			}
