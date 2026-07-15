@@ -54,6 +54,9 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 		}else null
 	}.also { editor.softWrapModel.applianceManager.addSoftWrapListener(it) }
 	private var previewImg = EMPTY_IMG
+	// Reusable back-buffer for ping-pong rendering: render into the spare, swap it to previewImg, and keep the
+	// old front as the next spare. Avoids allocating a fresh ~viewport-sized BufferedImage on every scroll frame.
+	private var spareImg: BufferedImage? = null
 	private val myRenderDirty = AtomicBoolean(false)
 	init {
 		makeListener()
@@ -96,29 +99,34 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 
 	@Suppress("UndesirableClassUsage")
 	private fun update(copyList: List<LineRenderData?>, myScrollState: ScrollState) {
+		if(!glancePanel.checkVisible()) return
 		val pixelsPerLine = myScrollState.pixelsPerLine
 		val scale = myScrollState.scale
 		val pixScale = getRasterScale()
-		val curImg = (if(glancePanel.checkVisible()) {
-			if(pixelsPerLine < 1){
-				getBufferedImage(myScrollState)
-			}else {
-				// Window the image to the visible viewport height only. Rendering below offsets each line by
-				// visibleStart, so a document of any length maps into this bounded raster and can never exceed
-				// the macOS Metal texture limit.
-				val windowHeight = myScrollState.drawHeight.coerceAtLeast(1)
-				BufferedImage(
-					getRasterWidth(glancePanel.getLogicalWidth(), pixScale),
-					getRasterBufferHeight(windowHeight, myScrollState.getRenderHeight(), pixScale),
-					BufferedImage.TYPE_INT_ARGB
-				)
-			}
-		} else null) ?: return
+		// Window the image to the visible viewport height only. Rendering below offsets each line by
+		// visibleStart, so a document of any length maps into this bounded raster and can never exceed the
+		// macOS Metal texture limit.
+		val windowHeight = myScrollState.drawHeight.coerceAtLeast(1)
+		val rasterWidth = getRasterWidth(glancePanel.getLogicalWidth(), pixScale)
+		val rasterHeight = getRasterBufferHeight(windowHeight, myScrollState.getRenderHeight(), pixScale)
+		// Reuse the spare buffer when the viewport size is unchanged (the common case while scrolling); it is
+		// cleared below before rendering. A size mismatch (viewport resize) discards the stale spare.
+		val prevSpare = spareImg
+		val reused = prevSpare?.takeIf { it.width == rasterWidth && it.height == rasterHeight }
+		if(reused == null) prevSpare?.flush()
+		spareImg = null
+		val curImg = reused ?: BufferedImage(rasterWidth, rasterHeight, BufferedImage.TYPE_INT_ARGB)
 		val renderHeight = myScrollState.getRenderHeight()
 		// The image only spans the visible window [windowStartY, windowEndY]; shift so windowStartY -> y=0.
 		val windowStartY = myScrollState.visibleStart
 		val windowEndY = myScrollState.visibleEnd
 		val graphics = curImg.createGraphics().apply {
+			if(reused != null){
+				// Erase the previous frame from the reused buffer before redrawing.
+				composite = GlancePanel.CLEAR
+				fillRect(0, 0, rasterWidth, rasterHeight)
+				composite = GlancePanel.srcOver
+			}
 			EditorUIUtil.setupAntialiasing(this)
 			scale(pixScale, pixScale)
 			// drawString-based rendering (marks) goes through graphics; translate it into window space.
@@ -236,7 +244,9 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 		}
 		previewImg.let {
 			previewImg = curImg
-			it.flush()
+			// Retain the old front as the reusable spare (ping-pong) rather than flushing it. EMPTY_IMG is a
+			// shared 1x1 sentinel and must never be reused/flushed.
+			spareImg = if(it === EMPTY_IMG) null else it
 		}
 	}
 
@@ -669,6 +679,8 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 		rangeList.clear()
 		editor.softWrapModel.applianceManager.removeSoftWrapListener(mySoftWrapChangeListener)
 		previewImg.flush()
+		spareImg?.flush()
+		spareImg = null
 	}
 
 	private data class LineRenderData(val renderData: Array<RenderData>, val startX: Int?,
