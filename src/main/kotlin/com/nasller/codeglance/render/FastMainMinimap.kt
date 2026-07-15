@@ -75,7 +75,8 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 							lock.set(false)
 							glancePanel.repaint()
 							if (myRenderDirty.get() || myScrollState.scale != scrollState.scale ||
-									myScrollState.getRenderHeight() != scrollState.getRenderHeight()) {
+									myScrollState.getRenderHeight() != scrollState.getRenderHeight() ||
+									myScrollState.visibleStart != scrollState.visibleStart) {
 								updateMinimapImage()
 								myRenderDirty.set(false)
 							}
@@ -102,20 +103,26 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 			if(pixelsPerLine < 1){
 				getBufferedImage(myScrollState)
 			}else {
-				val height = max(myScrollState.documentHeight.toDouble(), copyList.filterNotNull().sumOf {
-					it.getLineHeight(pixelsPerLine, scale) + it.aboveBlockLine * scale
-				} + (5 * pixelsPerLine))
+				// Window the image to the visible viewport height only. Rendering below offsets each line by
+				// visibleStart, so a document of any length maps into this bounded raster and can never exceed
+				// the macOS Metal texture limit.
+				val windowHeight = myScrollState.drawHeight.coerceAtLeast(1)
 				BufferedImage(
 					getRasterWidth(glancePanel.getLogicalWidth(), pixScale),
-					getRasterHeight(height, pixScale),
+					getRasterBufferHeight(windowHeight, myScrollState.getRenderHeight(), pixScale),
 					BufferedImage.TYPE_INT_ARGB
 				)
 			}
 		} else null) ?: return
 		val renderHeight = myScrollState.getRenderHeight()
+		// The image only spans the visible window [windowStartY, windowEndY]; shift so windowStartY -> y=0.
+		val windowStartY = myScrollState.visibleStart
+		val windowEndY = myScrollState.visibleEnd
 		val graphics = curImg.createGraphics().apply {
 			EditorUIUtil.setupAntialiasing(this)
 			scale(pixScale, pixScale)
+			// drawString-based rendering (marks) goes through graphics; translate it into window space.
+			translate(0.0, -windowStartY.toDouble())
 		}
 		val docCommentRgb by lazy(LazyThreadSafetyMode.NONE){
 			editor.colorsScheme.getAttributes(DefaultLanguageHighlighterColors.DOC_COMMENT).foregroundColor?.rgb
@@ -151,8 +158,11 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 			}
 			//Rendering
 			if(it !== DefaultLineRenderData){
+				// Only rasterise lines that intersect the visible window; totalY/skipY stay absolute so
+				// off-window layout (folds, block inlays, marks) still shifts lines below correctly.
+				val lineVisible = totalY + y >= windowStartY && totalY <= windowEndY
 				when(it.lineType){
-					null -> if(preSetPixelY != totalY.toInt()){
+					null -> if(lineVisible && preSetPixelY != totalY.toInt()){
 						var curX = it.startX ?: 0
 						val curY = totalY.toInt()
 						breakY@ for (renderData in it.renderData) {
@@ -162,14 +172,14 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 									9 -> 4 //TAB
 									10 -> break@breakY
 									else -> {
-										curImg.renderImage(curX, curY, char.code, renderHeight, pixScale)
+										curImg.renderImage(curX, curY - windowStartY, char.code, renderHeight, pixScale)
 										1
 									}
 								}
 							}
 						}
 					}
-					LineType.CUSTOM_FOLD -> if(it.customFoldRegion != null){
+					LineType.CUSTOM_FOLD -> if(lineVisible && it.customFoldRegion != null){
 						//this is render document
 						val foldRegion = it.customFoldRegion
 						val foldStartOffset = foldRegion.startOffset
@@ -195,7 +205,7 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 								}
 								else -> {
 									if(preSetPixelY != renderY){
-										curImg.renderImage(curX, renderY, char.code, renderHeight, pixScale)
+										curImg.renderImage(curX, renderY - windowStartY, char.code, renderHeight, pixScale)
 									}
 									curX += 1
 								}

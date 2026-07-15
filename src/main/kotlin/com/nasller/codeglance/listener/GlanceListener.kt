@@ -66,8 +66,12 @@ class GlanceListener(private val glancePanel: GlancePanel) : ComponentAdapter(),
 				repaint()
 			}
 		}else {
+			// The minimap image is windowed to the viewport, so a scroll that moves visibleStart must
+			// re-render the window. Files that fully fit keep visibleStart == 0 -> repaint only, no regression.
+			val old = glancePanel.scrollState.visibleStart
 			glancePanel.scrollState.recomputeVisible(e.newRectangle, glancePanel.getPixScale())
-			repaint()
+			if (glancePanel.checkVisible() && glancePanel.scrollState.visibleStart != old) glancePanel.updateImageOnScroll()
+			else repaint()
 		}
 	}
 

@@ -77,6 +77,8 @@ class GlancePanel(info: EditorInfo) : JPanel(), Disposable {
 
 	fun refreshImage() = minimap.updateMinimapImage()
 
+	fun updateImageOnScroll() = minimap.updateImageOnScroll()
+
 	fun refreshDataAndImage() {
 		preferredSize = if(!config.hoveringToShowScrollBar) getConfigSize() else Dimension(0,0)
 		revalidate()
@@ -318,10 +320,11 @@ class GlancePanel(info: EditorInfo) : JPanel(), Disposable {
 				// 拖拽调整宽度时，缓存图像可能还是旧宽度，保持源图和目标宽度同步，避免横向拉伸。
 				val imagePaintWidth = min(renderWidth, fromRasterSize(it.width, pixScale))
 				val imagePaintRasterWidth = min(it.width, toRasterSize(imagePaintWidth, pixScale))
-				val sourceStartY = toRasterCoordinate(scrollState.visibleStart, pixScale)
-				val sourceEndY = min(it.height, toRasterCoordinate(scrollState.visibleEnd, pixScale))
+				// The minimap image is windowed to the viewport: its top row already corresponds to
+				// scrollState.visibleStart, so blit 1:1 from the top instead of indexing by visibleStart.
+				val sourceEndY = min(it.height, toRasterCoordinate(scrollState.drawHeight, pixScale))
 				drawImage(it, 0, 0, imagePaintWidth, scrollState.drawHeight,
-					0, sourceStartY, imagePaintRasterWidth, sourceEndY, null)
+					0, 0, imagePaintRasterWidth, sourceEndY, null)
 			}
 			scrollbar.paint(this)
 		}

@@ -39,6 +39,7 @@ import java.awt.image.BufferedImage
 import java.beans.PropertyChangeListener
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 abstract class BaseMinimap(protected val glancePanel: GlancePanel): InlayModel.Listener, PropertyChangeListener,
@@ -63,6 +64,10 @@ abstract class BaseMinimap(protected val glancePanel: GlancePanel): InlayModel.L
 	abstract fun updateMinimapImage(canUpdate: Boolean = glancePanel.checkVisible())
 
 	open fun rebuildDataAndImage() = updateMinimapImage(canUpdate())
+
+	/** Re-render the windowed image after a scroll moved the visible window. Fast/Empty re-render immediately
+	 *  (cheap / coalesced); MainMinimap overrides to debounce its O(document) EDT scan. */
+	open fun updateImageOnScroll() = updateMinimapImage()
 
 	override fun getPriority(): Int = 170 //EditorDocumentPriorities
 
@@ -128,7 +133,9 @@ abstract class BaseMinimap(protected val glancePanel: GlancePanel): InlayModel.L
 	@Suppress("UndesirableClassUsage")
 	protected fun getBufferedImage(scrollState: ScrollState) = BufferedImage(
 		getRasterWidth(glancePanel.getLogicalWidth()),
-		getRasterBufferHeight(scrollState.documentHeight, scrollState.getRenderHeight()),
+		// Window the image to the visible viewport height, never the whole document, so the raster
+		// can never exceed the Metal max texture dimension on macOS (see MAX_IMAGE_DIM).
+		getRasterBufferHeight(scrollState.drawHeight.coerceAtLeast(1), scrollState.getRenderHeight()),
 		BufferedImage.TYPE_INT_ARGB
 	)
 
@@ -420,6 +427,9 @@ abstract class BaseMinimap(protected val glancePanel: GlancePanel): InlayModel.L
 	@Suppress("UndesirableClassUsage")
 	companion object{
 		val EMPTY_IMG = BufferedImage(1,1,BufferedImage.TYPE_INT_ARGB)
+		// Below the macOS Metal max 2D texture dimension (16384). Caps the minimap image so a very long file
+		// can never trigger "OutOfMemoryError: can't create offscreen surface" in the Metal Java2D pipeline.
+		const val MAX_IMAGE_DIM = 16000
 
 		internal fun toRasterSize(logicalSize: Int, rasterScale: Double): Int {
 			return max(1, (logicalSize * rasterScale).roundToInt())
@@ -437,8 +447,11 @@ abstract class BaseMinimap(protected val glancePanel: GlancePanel): InlayModel.L
 			return max(1, (rasterSize / rasterScale).roundToInt())
 		}
 
-		internal fun toRasterBufferHeight(documentHeight: Int, renderHeight: Int, rasterScale: Double): Int {
-			return toRasterSize(documentHeight + (100 * renderHeight), rasterScale)
+		internal fun toRasterBufferHeight(windowHeight: Int, renderHeight: Int, rasterScale: Double): Int {
+			// windowHeight is the visible viewport height (drawHeight). The small slack only needs to cover a
+			// partial line at the top/bottom edge plus mark descenders. MAX_IMAGE_DIM is a hard safety net so the
+			// allocation can never exceed the Metal offscreen-surface limit even if a caller passes a large height.
+			return min(MAX_IMAGE_DIM, toRasterSize(windowHeight + (4 * renderHeight), rasterScale))
 		}
 
 		@Suppress("UNUSED_PARAMETER")

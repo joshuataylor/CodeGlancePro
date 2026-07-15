@@ -38,6 +38,9 @@ class MainMinimap(glancePanel: GlancePanel): BaseMinimap(glancePanel){
 		return img
 	}
 
+	/** update() is an O(document) EDT scan; debounce scroll re-renders through the 500ms alarm to avoid jank. */
+	override fun updateImageOnScroll() = repaintOrRequest()
+
 	override fun updateMinimapImage(canUpdate: Boolean){
 		if (canUpdate && !checkOutOfLineRange {
 				imgReference = lazyOf(MySoftReference.create(EMPTY_IMG, false))
@@ -61,7 +64,7 @@ class MainMinimap(glancePanel: GlancePanel): BaseMinimap(glancePanel){
 	private fun getMinimapImage(): BufferedImage? {
 		var curImg = imgReference.value.get()
 		val rasterScale = getRasterScale()
-		if (shouldRecreateImage(curImg, scrollState.documentHeight, glancePanel.getLogicalWidth(), scrollState.getRenderHeight(), rasterScale)) {
+		if (shouldRecreateImage(curImg, scrollState.drawHeight, glancePanel.getLogicalWidth(), scrollState.getRenderHeight(), rasterScale)) {
 			curImg?.flush()
 			curImg = getBufferedImage(scrollState)
 			imgReference = lazyOf(MySoftReference.create(curImg, editor.editorKind != EditorKind.MAIN_EDITOR))
@@ -82,6 +85,10 @@ class MainMinimap(glancePanel: GlancePanel): BaseMinimap(glancePanel){
 			graphics.dispose()
 			return
 		}
+		// The image is windowed to the viewport; rasterise each line offset by visibleStart (y stays absolute
+		// so rangeList and fold/inlay bookkeeping remain in document coordinates). Marks go through graphics.
+		val windowStartY = scrollState.visibleStart
+		graphics.translate(0, -windowStartY)
 		glancePanel.setLineCount()
 		val pixScale = glancePanel.getPixScale()
 		val defaultColor = editor.colorsScheme.defaultForeground
@@ -111,7 +118,7 @@ class MainMinimap(glancePanel: GlancePanel): BaseMinimap(glancePanel){
 			moveCharIndex(it.code, null)
 			val renderY = y.toInt()
 			if(renderY != preSetPixelY) {
-				curImg.renderImage(x, renderY, it.code, renderHeight, pixScale)
+				curImg.renderImage(x, renderY - windowStartY, it.code, renderHeight, pixScale)
 			}
 		}
 		val highlight = makeMarkHighlight(text, graphics)
@@ -210,7 +217,7 @@ class MainMinimap(glancePanel: GlancePanel): BaseMinimap(glancePanel){
 						} }
 						val renderY = y.toInt()
 						if(renderY != preSetPixelY) {
-							curImg.renderImage(x, renderY, charCode, renderHeight, pixScale) {
+							curImg.renderImage(x, renderY - windowStartY, charCode, renderHeight, pixScale) {
 								(highlightList.firstOrNull { offset >= it.startOffset && offset < it.endOffset }?.foregroundColor ?:
 								color ?: defaultColor).setColorRgb()
 							}

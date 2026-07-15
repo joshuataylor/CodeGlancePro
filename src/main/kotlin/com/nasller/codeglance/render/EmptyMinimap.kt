@@ -54,7 +54,7 @@ class EmptyMinimap (glancePanel: GlancePanel) : BaseMinimap(glancePanel) {
 	private fun getMinimapImage(): BufferedImage? {
 		var curImg = imgReference.value.get()
 		val rasterScale = getRasterScale()
-		if (shouldRecreateImage(curImg, scrollState.documentHeight, glancePanel.getLogicalWidth(), scrollState.getRenderHeight(), rasterScale)) {
+		if (shouldRecreateImage(curImg, scrollState.drawHeight, glancePanel.getLogicalWidth(), scrollState.getRenderHeight(), rasterScale)) {
 			curImg?.flush()
 			curImg = getBufferedImage(scrollState)
 			imgReference = lazyOf(MySoftReference.create(curImg, editor.editorKind != EditorKind.MAIN_EDITOR))
@@ -75,6 +75,8 @@ class EmptyMinimap (glancePanel: GlancePanel) : BaseMinimap(glancePanel) {
 			graphics.dispose()
 			return
 		}
+		// The image is windowed to the viewport; shift so marks drawn at absolute y land in window space.
+		graphics.translate(0, -scrollState.visibleStart)
 		glancePanel.setLineCount()
 		val pixScale = glancePanel.getPixScale()
 		val hlIter = editor.highlighter.createIterator(0).run {
