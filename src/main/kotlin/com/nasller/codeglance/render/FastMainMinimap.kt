@@ -57,6 +57,9 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 	// Reusable back-buffer for ping-pong rendering: render into the spare, swap it to previewImg, and keep the
 	// old front as the next spare. Avoids allocating a fresh ~viewport-sized BufferedImage on every scroll frame.
 	private var spareImg: BufferedImage? = null
+	// Snapshot of renderDataList reused across renders. Only rebuilt when the data actually changes, so pure
+	// scrolling (which re-renders the window every frame) no longer copies the whole line list each time.
+	@Volatile private var cachedRenderData: List<LineRenderData?>? = null
 	private val myRenderDirty = AtomicBoolean(false)
 	init {
 		makeListener()
@@ -72,7 +75,7 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 				ApplicationManager.getApplication().executeOnPooledThread {
 					val myScrollState = glancePanel.scrollState.clone()
 					try {
-						update(renderDataList.toList(), myScrollState)
+						update(cachedRenderData ?: renderDataList.toList().also { cachedRenderData = it }, myScrollState)
 					}finally {
 						invokeLater(modalityState){
 							lock.set(false)
@@ -360,6 +363,7 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 			if(endVisualLine == 0 || visualLine <= endVisualLine) visLinesIterator.advance()
 			else break
 		}
+		cachedRenderData = null // data changed -> next render rebuilds the snapshot
 		updateMinimapImage()
 	}
 
@@ -575,6 +579,7 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 	private fun doInvalidateRange(startOffset: Int, endOffset: Int, reset: Boolean = false) {
 		if (checkOutOfLineRange {
 				renderDataList.clear()
+				cachedRenderData = null
 				previewImg = EMPTY_IMG
 				invokeLater { glancePanel.repaint() }
 		} || checkDirty() || checkProcessReset(startOffset,endOffset,reset)) return
@@ -597,6 +602,7 @@ class FastMainMinimap(glancePanel: GlancePanel) : BaseMinimap(glancePanel), High
 			invokeLater { rebuildDataAndImage() }
 			return
 		}
+		cachedRenderData = null // line count changed -> invalidate snapshot before the data task runs
 		submitUpdateMinimapDataTask(startVisualLine, endVisualLine, reset)
 	}
 
